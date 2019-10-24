@@ -52,7 +52,7 @@ TEST_CASE("GetFile: MaxSize", "[getFileFifo]") {  // NOLINT
   std::string in_file = temp_path + utils::file::FileUtils::get_separator() + "testfifo";
 
   // Define test input file
-  std::string hidden_in_file(in_dir);
+  std::string hidden_in_file(temp_path);
   hidden_in_file.append("/.testfifo");  // hidden
 
   // Build MiNiFi processing graph
