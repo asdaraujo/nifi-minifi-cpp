@@ -32,52 +32,73 @@ namespace minifi {
 namespace processors {
 
 #define MAX_RECORD_BUFFER_SIZE 0x10000 // 64k
-const LPWSTR pEventTypeNames[] = { L"Error", L"Warning", L"Informational", L"Audit Success", L"Audit Failure" };
 char log_name[255] = "Application";
+
+const std::string MIME_JSON = "application/json";
+const std::string MIME_TEXT = "text/plain";
+
+typedef struct {
+	std::string log_source_;
+	int64_t current_record_id_;
+} TailState;
 
 //! TailEventLog Class
 class TailEventLog : public core::Processor
 {
 public:
 	//! Constructor
-	/*!
-	 * Create a new processor
-	 */
-	TailEventLog(std::string name, utils::Identifier uuid = utils::Identifier())
-	: core::Processor(name, uuid), logger_(logging::LoggerFactory<TailEventLog>::getLogger()),max_events_(1){
+	TailEventLog(
+		std::string name,
+		utils::Identifier uuid = utils::Identifier()
+	) : core::Processor(name, uuid),
+		logger_(logging::LoggerFactory<TailEventLog>::getLogger()),
+		max_events_(1) {
 	}
+
 	//! Destructor
 	virtual ~TailEventLog()
 	{
 	}
+
 	//! Processor Name
 	static const std::string ProcessorName;
+
 	//! Supported Properties
 	static core::Property LogSourceFileName;
 	static core::Property MaxEventsPerFlowFile;
+	static core::Property StateFile;
+	static core::Property IncludeData;
+	static core::Property IncludeStrings;
+	static core::Property AutoOffsetReset;
+	static core::Property MimeType;
 
 	//! Supported Relationships
 	static core::Relationship Success;
 
 public:
-  /**
-   * Function that's executed when the processor is scheduled.
-   * @param context process context.
-   * @param sessionFactory process session factory that is used when creating
-   * ProcessSession objects.
-   */
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
+	//! OnSchedule method, implemented by NiFi TailEventLog
+	void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
 	//! OnTrigger method, implemented by NiFi TailEventLog
 	virtual void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
 	//! Initialize, over write by NiFi TailEventLog
 	virtual void initialize(void) override;
+	// recoverState
+	bool recoverState();
+	// storeState
+	void storeState();
+	void TailEventLog::parseStateFileLine(char *buf);
+	std::string TailEventLog::trimRight(const std::string& s);
+	std::pair<std::string, DWORD> TailEventLog::formatTextEvent(const LPSTR& strings, DWORD num_strings, io::DataStream data_stream, DWORD data_stream_length, std::map<std::string, std::string> attributes);
+	std::pair<std::string, DWORD> TailEventLog::formatJsonEvent(const LPSTR& strings, DWORD num_strings, io::DataStream data_stream, DWORD data_stream_length, std::map<std::string, std::string> attributes);
+	std::pair<std::string, DWORD> TailEventLog::convertToBase64(const char *buffer, DWORD length);
+
+	static const int BUFFER_SIZE = 10240;
 
 protected:
 
 	virtual void notifyStop() override{
 		CloseEventLog(log_handle_);
 	}
-
 
 	inline std::string typeToString(WORD wEventType)
 	{
@@ -112,9 +133,14 @@ protected:
 		FileTimeToLocalFileTime(&ft, &ftLocal);
 		FileTimeToSystemTime(&ftLocal, &st);
 
-		std::stringstream  str;
+		std::stringstream str;
 		str.precision(2);
-		str << st.wMonth << "/" << st.wDay << "/" << st.wYear << " " << st.wHour << ":" << st.wMinute << ":" << st.wSecond;
+		str << st.wYear << "-"
+			<< (st.wMonth < 10 ? "0" : "") << st.wMonth << "-" 
+			<< (st.wDay < 10 ? "0" : "") << st.wDay << " " 
+			<< (st.wHour < 10 ? "0" : "") << st.wHour << ":"
+			<< (st.wMinute < 10 ? "0" : "") << st.wMinute << ":"
+			<< (st.wSecond < 10 ? "0" : "") << st.wSecond;
 
 		return str.str();
 	}
@@ -144,11 +170,23 @@ protected:
 
 
 private:
-  std::mutex log_mutex_;
   std::string log_source_;
   uint32_t max_events_;
+  int32_t auto_offset_reset_;
+  bool include_data_;
+  bool include_strings_;
+  std::string mime_type_;
   DWORD current_record_;
+  DWORD last_record_;
   DWORD num_records_;
+
+  std::mutex tail_event_log_mutex_;
+  // File to save state
+  std::string state_file_;
+  // determine if state is recovered;
+  bool state_recovered_;
+  // map to store the state
+  std::map<std::string, TailState> tail_states_;
 
   HANDLE log_handle_;
   // Logger
